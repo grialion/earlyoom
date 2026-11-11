@@ -60,38 +60,14 @@ static long long available_guesstimate(const char* buf)
     return MemFree + Cached + Buffers - Shmem;
 }
 
-/* Parse /proc/meminfo.
+/* Parse the contents of /proc/meminfo (in buf).
  * This function either returns valid data or kills the process
  * with a fatal error.
  */
-meminfo_t parse_meminfo()
+meminfo_t parse_meminfo_buf(const char* buf)
 {
-    // Note that we do not need to close static FDs that we ensure to
-    // `fopen()` maximally once.
-    static FILE* fd;
     static int guesstimate_warned = 0;
-    // On Linux 5.3, "wc -c /proc/meminfo" counts 1391 bytes.
-    // 8192 should be enough for the foreseeable future.
-    char buf[8192] = { 0 };
     meminfo_t m = { 0 };
-
-    if (fd == NULL) {
-        char buf[PATH_LEN] = { 0 };
-        snprintf(buf, sizeof(buf), "%s/%s", procdir_path, "meminfo");
-        fd = fopen(buf, "r");
-    }
-    if (fd == NULL) {
-        fatal(102, "could not open /proc/meminfo: %s\n", strerror(errno));
-    }
-    rewind(fd);
-
-    size_t len = fread(buf, 1, sizeof(buf) - 1, fd);
-    if (ferror(fd)) {
-        fatal(103, "could not read /proc/meminfo: %s\n", strerror(errno));
-    }
-    if (len == 0) {
-        fatal(103, "could not read /proc/meminfo: 0 bytes returned\n");
-    }
 
     m.MemTotalKiB = get_entry_fatal("MemTotal:", buf);
     m.SwapTotalKiB = get_entry_fatal("SwapTotal:", buf);
@@ -114,6 +90,17 @@ meminfo_t parse_meminfo()
         }
     }
 
+    // Recent kernels report GPU driver page pools (amdgpu/TTM) as "GPUReclaim":
+    // freed pages kept for reuse that the shrinker releases on demand. The kernel's
+    // MemAvailable does not include them (si_mem_available() only counts free memory,
+    // file page cache and reclaimable slab/misc), so add them here. Otherwise we
+    // would kill processes while GBs are still reclaimable.
+    m.GPUReclaimKiB = get_entry("GPUReclaim:", buf);
+    if (m.GPUReclaimKiB < 0) {
+        m.GPUReclaimKiB = 0; // not reported by this kernel
+    }
+    m.MemAvailableKiB += m.GPUReclaimKiB;
+
     // Calculated values
     m.UserMemTotalKiB = m.MemAvailableKiB + m.AnonPagesKiB;
 
@@ -126,6 +113,40 @@ meminfo_t parse_meminfo()
     }
 
     return m;
+}
+
+/* Parse /proc/meminfo.
+ * This function either returns valid data or kills the process
+ * with a fatal error.
+ */
+meminfo_t parse_meminfo()
+{
+    // Note that we do not need to close static FDs that we ensure to
+    // `fopen()` maximally once.
+    static FILE* fd;
+    // On Linux 5.3, "wc -c /proc/meminfo" counts 1391 bytes.
+    // 8192 should be enough for the foreseeable future.
+    char buf[8192] = { 0 };
+
+    if (fd == NULL) {
+        char buf[PATH_LEN] = { 0 };
+        snprintf(buf, sizeof(buf), "%s/%s", procdir_path, "meminfo");
+        fd = fopen(buf, "r");
+    }
+    if (fd == NULL) {
+        fatal(102, "could not open /proc/meminfo: %s\n", strerror(errno));
+    }
+    rewind(fd);
+
+    size_t len = fread(buf, 1, sizeof(buf) - 1, fd);
+    if (ferror(fd)) {
+        fatal(103, "could not read /proc/meminfo: %s\n", strerror(errno));
+    }
+    if (len == 0) {
+        fatal(103, "could not read /proc/meminfo: 0 bytes returned\n");
+    }
+
+    return parse_meminfo_buf(buf);
 }
 
 bool is_alive(int pid)

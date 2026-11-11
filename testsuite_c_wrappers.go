@@ -58,6 +58,12 @@ func parse_meminfo() C.meminfo_t {
 	return C.parse_meminfo()
 }
 
+func parse_meminfo_buf(buf string) C.meminfo_t {
+	cbuf := C.CString(buf)
+	defer C.free(unsafe.Pointer(cbuf))
+	return C.parse_meminfo_buf(cbuf)
+}
+
 // Wrapper so _test.go code can create a poll_loop_args_t
 // struct. _test.go code cannot use C.
 func poll_loop_args_t(sort_by_rss bool) (args C.poll_loop_args_t) {

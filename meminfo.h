@@ -14,6 +14,9 @@ typedef struct {
     long long SwapTotalKiB;
     long long SwapFreeKiB;
     long long AnonPagesKiB;
+    // Reclaimable GPU driver page pool (0 if the kernel does not report it).
+    // Already included in MemAvailableKiB.
+    long long GPUReclaimKiB;
     // Calculated values
     // UserMemTotalKiB = MemAvailableKiB + AnonPagesKiB.
     // Represents the total amount of memory that may be used by user processes.
@@ -38,6 +41,7 @@ typedef struct procinfo {
 #define PROCINFO_FIELD_NOT_SET -9999
 
 meminfo_t parse_meminfo();
+meminfo_t parse_meminfo_buf(const char* buf);
 bool is_alive(int pid);
 void print_mem_stats(int (*out_func)(const char* fmt, ...), const meminfo_t m);
 int get_oom_score(int pid);

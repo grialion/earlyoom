@@ -477,3 +477,49 @@ func TestTriggerKernelOomKiller_WithNoAccessToSysrq(t *testing.T) {
 		t.Errorf("Expected -1 for non-root user, got %d", res)
 	}
 }
+
+// meminfoBuf returns a synthetic /proc/meminfo excerpt (16 GiB machine).
+// "GPUReclaim" is a shrinker-reclaimable GPU page pool that MemAvailable does not count.
+func meminfoBuf(gpuReclaimLine string) string {
+	return "MemTotal:       16777216 kB\n" +
+		"MemFree:         8388608 kB\n" +
+		"MemAvailable:   10485760 kB\n" +
+		"SwapTotal:             0 kB\n" +
+		"SwapFree:              0 kB\n" +
+		"AnonPages:       4194304 kB\n" +
+		"Shmem:            524288 kB\n" +
+		"GPUActive:        262144 kB\n" +
+		gpuReclaimLine +
+		"HugePages_Total:       0\n"
+}
+
+func Test_parse_meminfo_buf_GPUReclaim(t *testing.T) {
+	const avail = 10485760
+	const anon = 4194304
+	const pool = 2097152
+
+	// Reported by the kernel: added to MemAvailable
+	m := parse_meminfo_buf(meminfoBuf("GPUReclaim:      2097152 kB\n"))
+	if m.GPUReclaimKiB != pool {
+		t.Errorf("GPUReclaimKiB: have=%d, want=%d", m.GPUReclaimKiB, pool)
+	}
+	if want := int64(avail + pool); int64(m.MemAvailableKiB) != want {
+		t.Errorf("MemAvailableKiB: have=%d, want=%d", m.MemAvailableKiB, want)
+	}
+	if want := int64(avail + pool + anon); int64(m.UserMemTotalKiB) != want {
+		t.Errorf("UserMemTotalKiB: have=%d, want=%d", m.UserMemTotalKiB, want)
+	}
+
+	// Pool is empty
+	m = parse_meminfo_buf(meminfoBuf("GPUReclaim:            0 kB\n"))
+	if m.MemAvailableKiB != avail {
+		t.Errorf("empty pool: MemAvailableKiB: have=%d, want=%d", m.MemAvailableKiB, avail)
+	}
+
+	// Kernel does not know "GPUReclaim": MemAvailable is used unchanged
+	m = parse_meminfo_buf(meminfoBuf(""))
+	if m.GPUReclaimKiB != 0 || m.MemAvailableKiB != avail {
+		t.Errorf("no GPUReclaim: have GPUReclaimKiB=%d MemAvailableKiB=%d, want 0 and %d",
+			m.GPUReclaimKiB, m.MemAvailableKiB, avail)
+	}
+}
